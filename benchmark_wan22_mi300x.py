@@ -311,12 +311,10 @@ STEP_COUNTS = [
 ]
 
 DEFAULT_PROMPT = (
-    "A rainy night in a dense cyberpunk market, neon kanji signs flicker overhead. "
-    "The camera looks down on a flying DeLorean car as it cruises down a street lit "
-    "by holographic advertisements. Volumetric pink-blue backlight cuts through steam "
-    "vents, puddles mirror the glow. Lens flare, shallow depth of field. Moody, Blade-Runner vibe."
+    "Epic slow-motion shot of a gaming PC with AMD Radeon graphics card rendering a fantasy world,"
+    "the camera pushes through the GPU fans into the silicon where we see electrical signals racing through the chip architecture," 
+    "then emerges into a vast AI data center with rows of AMD Instinct Data Center GPU accelerators processing neural networks"
 )
-
 
 def generate_benchmark_configs(
     resolutions: List[Dict[str, Any]],
