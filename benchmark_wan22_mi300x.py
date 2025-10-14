@@ -481,9 +481,10 @@ def save_results(results: List[Dict[str, Any]], output_file: str):
 
 RESOLUTION_TESTS = [
     # Standard resolutions
-    {'width': 1280, 'height': 720, 'name': 'HD'},
-    {'width': 1920, 'height': 1080, 'name': 'Full HD'},
-    {'width': 1920, 'height': 1280, 'name': 'High Resolution'},
+    {'width': 640, 'height': 480, 'name': '480P'},
+    {'width': 1280, 'height': 720, 'name': '720P'},
+    {'width': 1920, 'height': 1080, 'name': '1080P'},
+    #{'width': 1920, 'height': 1280, 'name': 'High Resolution'},
 ]
 
 FRAME_COUNTS = [
@@ -517,10 +518,10 @@ def generate_benchmark_configs(
     if quick_test:
         # Quick test: one config for each dimension
         configs.append({
-            'width': 1280,
-            'height': 720,
-            'length': 161,
-            'steps': 40,
+            'width': 640,
+            'height': 480,
+            'length': 81,
+            'steps': 20,
             'prompt': prompt,
             'seed': 12345
         })
