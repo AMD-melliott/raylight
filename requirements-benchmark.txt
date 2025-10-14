@@ -1,0 +1,29 @@
+# Requirements for Raylight Benchmark Suite
+#
+# The benchmark scripts (benchmark_wan22_mi300x.py and benchmark_attention_backends.py)
+# use only Python standard library and have NO required dependencies.
+#
+# These are OPTIONAL dependencies for result analysis and visualization:
+
+# Data analysis (for processing CSV benchmark results)
+pandas>=2.0.0
+
+# Visualization (for plotting performance comparisons)
+matplotlib>=3.7.0
+
+# Jupyter (for interactive analysis notebooks)
+jupyter>=1.0.0
+ipykernel>=6.0.0
+
+# Statistical analysis (optional, for advanced benchmarking)
+scipy>=1.10.0
+numpy>=1.24.0
+
+# Performance profiling (optional, for advanced debugging)
+# psutil>=5.9.0  # Uncomment if you want system resource monitoring
+
+# Note: The benchmark scripts themselves work with any Python 3.8+ installation
+# These packages are only needed if you want to:
+# - Analyze CSV results with pandas
+# - Create performance plots with matplotlib
+# - Run interactive analysis in Jupyter notebooks

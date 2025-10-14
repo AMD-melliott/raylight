@@ -9,13 +9,13 @@ python main.py
 
 # 2. In another terminal, run quick test (FP16)
 cd /path/to/raylight
-python benchmark_wan22_mi300x.py --quick
+python benchmark_wan22_mi300x.py --quick --warmup 1
 
 # 3. Run quick test with FP8 quantization (faster!)
-python benchmark_wan22_mi300x.py --quick --precision fp8
+python benchmark_wan22_mi300x.py --quick --precision fp8 --warmup 1
 
-# 4. Run full benchmark
-python benchmark_wan22_mi300x.py --precision fp8
+# 4. Run full benchmark with warm-up (recommended)
+python benchmark_wan22_mi300x.py --precision fp8 --warmup 2
 
 # 5. Compare attention backends
 python benchmark_attention_backends.py
@@ -75,11 +75,37 @@ On 8× MI300X with USP (sequence parallel):
 - System configuration
 - **MI300X has excellent FP8 support** - expect good speedups!
 
+## Warm-Up: Eliminating Cold-Start Overhead
+
+**Why warm-up matters:**
+- First run loads models into VRAM (~30-60s overhead)
+- Ray actors initialize
+- Flash Attention kernels compile
+- CUDA/ROCm runtime warms up
+
+**Recommendation**: Always use `--warmup 1` or `--warmup 2` for accurate benchmarks!
+
+```bash
+# Without warm-up (first run includes load time)
+python benchmark_wan22_mi300x.py --quick
+# Result: 85s (includes 40s model loading)
+
+# With warm-up (accurate timing)
+python benchmark_wan22_mi300x.py --quick --warmup 1
+# Warm-up: 85s (loads models)
+# Benchmark: 45s (actual performance)
+```
+
+**How it works:**
+- Runs 1-2 minimal generations (720p, 81 frames, 20 steps)
+- Ensures models loaded and kernels compiled
+- Subsequent benchmarks measure pure inference time
+
 ## Next Steps
 
-1. **Run quick test** to validate setup
+1. **Run quick test with warm-up** to validate setup
 2. **Review BENCHMARK_README.md** for detailed docs
-3. **Run full benchmark** overnight
+3. **Run full benchmark** overnight (with --warmup 2)
 4. **Test attention backends** to find optimal config
 5. **Share results** with the community!
 

@@ -143,6 +143,65 @@ def extract_timing_info(history: Dict[str, Any]) -> Dict[str, float]:
     return timings
 
 
+def run_warmup(
+    client: ComfyUIClient,
+    workflow_template: Dict[str, Any],
+    precision: str = 'fp16',
+    warmup_runs: int = 1
+) -> None:
+    """
+    Run warm-up generation(s) to ensure models are loaded.
+
+    This eliminates cold-start overhead from benchmark timings by:
+    - Loading models into VRAM
+    - Initializing Ray actors
+    - Compiling kernels (Flash Attention, etc.)
+    - Warming up CUDA/ROCm runtime
+    """
+    print("\n" + "="*80)
+    print(f"WARM-UP ({warmup_runs} run{'s' if warmup_runs > 1 else ''})")
+    print("="*80)
+    print("Loading models and initializing GPU kernels...")
+    print("(This ensures accurate benchmark timing by eliminating cold-start overhead)")
+
+    # Use minimal configuration for fastest warm-up
+    warmup_config = {
+        'width': 1280,
+        'height': 720,
+        'length': 81,  # Shortest video length
+        'steps': 20,   # Minimum steps
+        'prompt': 'Test',  # Short prompt
+        'seed': 0
+    }
+
+    for i in range(warmup_runs):
+        if warmup_runs > 1:
+            print(f"\nWarm-up run {i+1}/{warmup_runs}...")
+
+        workflow = create_benchmark_workflow(
+            workflow_template,
+            width=warmup_config['width'],
+            height=warmup_config['height'],
+            length=warmup_config['length'],
+            steps=warmup_config['steps'],
+            prompt=warmup_config['prompt'],
+            seed=warmup_config['seed']
+        )
+
+        start_time = time.time()
+        prompt_id = client.queue_prompt(workflow)
+        client.wait_for_completion(prompt_id)
+        elapsed = time.time() - start_time
+
+        if warmup_runs > 1:
+            print(f"  Completed in {elapsed:.2f}s")
+
+    print(f"\n✓ Warm-up complete! Models loaded and ready.")
+    print(f"  Precision: {precision.upper()}")
+    print(f"  Models are now in VRAM and kernels compiled")
+    print("="*80)
+
+
 def run_benchmark(
     client: ComfyUIClient,
     workflow_template: Dict[str, Any],
@@ -340,20 +399,20 @@ Examples:
   # Quick test (single config, FP16)
   python benchmark_wan22_mi300x.py --quick
 
-  # Quick test with FP8 quantization
-  python benchmark_wan22_mi300x.py --quick --precision fp8
+  # Quick test with FP8 quantization and warm-up
+  python benchmark_wan22_mi300x.py --quick --precision fp8 --warmup 1
 
-  # Full benchmark with FP16 (default)
-  python benchmark_wan22_mi300x.py
+  # Full benchmark with FP16 and warm-up (recommended)
+  python benchmark_wan22_mi300x.py --warmup 2
 
   # Full benchmark with FP8 quantization
-  python benchmark_wan22_mi300x.py --precision fp8
+  python benchmark_wan22_mi300x.py --precision fp8 --warmup 1
 
   # Custom benchmark with explicit workflow
-  python benchmark_wan22_mi300x.py --workflow workflow.json --output my_results.csv
+  python benchmark_wan22_mi300x.py --workflow workflow.json --output my_results.csv --warmup 1
 
   # Test specific configuration
-  python benchmark_wan22_mi300x.py --width 1920 --height 1080 --length 161 --steps 50 --precision fp8
+  python benchmark_wan22_mi300x.py --width 1920 --height 1080 --length 161 --steps 50 --precision fp8 --warmup 1
         """
     )
 
@@ -369,6 +428,10 @@ Examples:
                        help='Run quick test (single config)')
     parser.add_argument('--prompt', type=str, default=DEFAULT_PROMPT,
                        help='Text prompt for generation')
+    parser.add_argument('--warmup', type=int, metavar='N', default=0,
+                       help='Run N warm-up generations before benchmarking (default: 0, recommended: 1-2)')
+    parser.add_argument('--no-warmup', action='store_true',
+                       help='Skip automatic warm-up (not recommended for accurate timing)')
 
     # Custom configuration options
     parser.add_argument('--width', type=int, help='Custom width')
@@ -430,6 +493,18 @@ Examples:
 
     print(f"\nStarting benchmark with {len(configs)} configurations")
     print(f"Results will be saved to: {args.output}")
+
+    # Run warm-up if requested
+    if args.warmup > 0 and not args.no_warmup:
+        try:
+            run_warmup(client, workflow_template, precision=args.precision, warmup_runs=args.warmup)
+        except Exception as e:
+            print(f"\n⚠ Warning: Warm-up failed: {e}")
+            print("Continuing with benchmarks anyway...")
+    elif not args.no_warmup and len(configs) > 1:
+        # Automatic single warm-up for multi-config runs
+        print("\n💡 Tip: Use --warmup 1 to ensure models are loaded before benchmarking")
+        print("   (This prevents cold-start from affecting first benchmark run)")
 
     # Run benchmarks
     results = []
