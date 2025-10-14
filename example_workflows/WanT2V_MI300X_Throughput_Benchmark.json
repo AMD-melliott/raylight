@@ -1,0 +1,215 @@
+{
+  "8": {
+    "inputs": {
+      "unet_name": "Wan2.2/wan2.2_t2v_low_noise_14B_fp16.safetensors",
+      "weight_dtype": "default",
+      "ray_actors_init": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "RayUNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model (Ray)"
+    }
+  },
+  "14": {
+    "inputs": {
+      "add_noise": "disable",
+      "noise_seed": 0,
+      "steps": 40,
+      "cfg": 3.5,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "start_at_step": 20,
+      "end_at_step": 10000,
+      "return_with_leftover_noise": "disable",
+      "ray_actors": [
+        "8",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "20",
+        0
+      ],
+      "latent_image": [
+        "46",
+        0
+      ]
+    },
+    "class_type": "XFuserKSamplerAdvanced",
+    "_meta": {
+      "title": "XFuser KSampler (Advanced)"
+    }
+  },
+  "15": {
+    "inputs": {
+      "clip_name": "umt5_xxl_fp16.safetensors",
+      "type": "wan",
+      "device": "default"
+    },
+    "class_type": "CLIPLoader",
+    "_meta": {
+      "title": "Load CLIP"
+    }
+  },
+  "16": {
+    "inputs": {
+      "vae_name": "wan_2.1_vae.safetensors"
+    },
+    "class_type": "VAELoader",
+    "_meta": {
+      "title": "Load VAE"
+    }
+  },
+  "17": {
+    "inputs": {
+      "text": "A rainy night in a dense cyberpunk market, neon kanji signs flicker overhead. The camera looks down on a flying DeLorean car as it cruises down a street lit by holographic advertisements. Volumetric pink-blue backlight cuts through steam vents, puddles mirror the glow. Lens flare, shallow depth of field. Moody, Blade-Runner vibe.",
+      "clip": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "19": {
+    "inputs": {
+      "width": 1280,
+      "height": 720,
+      "length": 161,
+      "batch_size": 1
+    },
+    "class_type": "EmptyHunyuanLatentVideo",
+    "_meta": {
+      "title": "EmptyHunyuanLatentVideo"
+    }
+  },
+  "20": {
+    "inputs": {
+      "text": "Overexposure, static, blurred details, subtitles, style, artwork, painting, still image, overall grayness, worst quality, low quality, JPEG compression residue, ugly, mutilated, extra fingers, poorly drawn hands, poorly drawn faces, deformed, disfigured, malformed limbs, fused fingers, still image, cluttered background, three legs, crowded background, walking backwards",
+      "clip": [
+        "15",
+        0
+      ]
+    },
+    "class_type": "CLIPTextEncode",
+    "_meta": {
+      "title": "CLIP Text Encode (Positive Prompt)"
+    }
+  },
+  "21": {
+    "inputs": {
+      "samples": [
+        "14",
+        0
+      ],
+      "vae": [
+        "16",
+        0
+      ]
+    },
+    "class_type": "VAEDecode",
+    "_meta": {
+      "title": "VAE Decode"
+    }
+  },
+  "22": {
+    "inputs": {
+      "fps": 16,
+      "images": [
+        "21",
+        0
+      ]
+    },
+    "class_type": "CreateVideo",
+    "_meta": {
+      "title": "Create Video"
+    }
+  },
+  "23": {
+    "inputs": {
+      "filename_prefix": "raylight/gen_",
+      "format": "auto",
+      "codec": "auto",
+      "video-preview": "",
+      "video": [
+        "22",
+        0
+      ]
+    },
+    "class_type": "SaveVideo",
+    "_meta": {
+      "title": "Save Video"
+    }
+  },
+  "38": {
+    "inputs": {
+      "ray_cluster_address": "local",
+      "ray_cluster_namespace": "default",
+      "GPU": 8,
+      "ulysses_degree": 8,
+      "ring_degree": 1,
+      "FSDP": false,
+      "FSDP_CPU_OFFLOAD": false,
+      "XFuser_attention": "FLASH_ATTN"
+    },
+    "class_type": "RayInitializer",
+    "_meta": {
+      "title": "Ray Init Actor"
+    }
+  },
+  "45": {
+    "inputs": {
+      "unet_name": "Wan2.2/wan2.2_t2v_high_noise_14B_fp16.safetensors",
+      "weight_dtype": "default",
+      "ray_actors_init": [
+        "38",
+        0
+      ]
+    },
+    "class_type": "RayUNETLoader",
+    "_meta": {
+      "title": "Load Diffusion Model (Ray)"
+    }
+  },
+  "46": {
+    "inputs": {
+      "add_noise": "enable",
+      "noise_seed": 195253383731029,
+      "steps": 40,
+      "cfg": 3.5,
+      "sampler_name": "euler",
+      "scheduler": "beta",
+      "start_at_step": 0,
+      "end_at_step": 20,
+      "return_with_leftover_noise": "enable",
+      "ray_actors": [
+        "45",
+        0
+      ],
+      "positive": [
+        "17",
+        0
+      ],
+      "negative": [
+        "20",
+        0
+      ],
+      "latent_image": [
+        "19",
+        0
+      ]
+    },
+    "class_type": "XFuserKSamplerAdvanced",
+    "_meta": {
+      "title": "XFuser KSampler (Advanced)"
+    }
+  }
+}
