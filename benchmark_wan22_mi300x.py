@@ -6,15 +6,69 @@ Tests latency with various resolutions, frame counts, and steps using Flash Atte
 
 import json
 import urllib.request
+import urllib.error
 import time
 import csv
 import os
 from datetime import datetime
-from typing import Dict, Any, List
+from typing import Dict, Any, List, Optional
 import argparse
 
 # ComfyUI server configuration
 COMFYUI_URL = "http://127.0.0.1:8188"
+
+
+class ComfyUIError(Exception):
+    """Base exception for ComfyUI API errors"""
+    pass
+
+
+class ComfyUIAPIError(ComfyUIError):
+    """Exception raised when ComfyUI API returns an error response"""
+    def __init__(self, status_code: int, message: str, details: Optional[Dict[str, Any]] = None):
+        self.status_code = status_code
+        self.message = message
+        self.details = details or {}
+        super().__init__(self._format_error())
+
+    def _format_error(self) -> str:
+        """Format error message for display"""
+        lines = [f"ComfyUI API Error ({self.status_code}): {self.message}"]
+
+        if self.details:
+            lines.append("\nDetails:")
+            for key, value in self.details.items():
+                lines.append(f"  {key}: {value}")
+
+        return "\n".join(lines)
+
+
+class ComfyUIExecutionError(ComfyUIError):
+    """Exception raised when workflow execution fails"""
+    def __init__(self, prompt_id: str, node_id: Optional[str] = None,
+                 exception_type: Optional[str] = None, exception_message: Optional[str] = None,
+                 traceback: Optional[str] = None):
+        self.prompt_id = prompt_id
+        self.node_id = node_id
+        self.exception_type = exception_type
+        self.exception_message = exception_message
+        self.traceback = traceback
+        super().__init__(self._format_error())
+
+    def _format_error(self) -> str:
+        """Format execution error for display"""
+        lines = [f"Workflow Execution Failed (prompt_id: {self.prompt_id})"]
+
+        if self.node_id:
+            lines.append(f"Failed at node: {self.node_id}")
+        if self.exception_type:
+            lines.append(f"Error type: {self.exception_type}")
+        if self.exception_message:
+            lines.append(f"Message: {self.exception_message}")
+        if self.traceback:
+            lines.append(f"\nTraceback:\n{self.traceback}")
+
+        return "\n".join(lines)
 
 
 class ComfyUIClient:
@@ -24,33 +78,140 @@ class ComfyUIClient:
         self.server_url = server_url
 
     def queue_prompt(self, prompt: Dict[str, Any]) -> str:
-        """Queue a prompt and return the prompt_id"""
+        """
+        Queue a prompt and return the prompt_id.
+
+        Raises:
+            ComfyUIAPIError: If the API returns an error response
+            ComfyUIError: If there's a connection or communication error
+        """
         data = json.dumps({"prompt": prompt}).encode('utf-8')
         req = urllib.request.Request(f"{self.server_url}/prompt", data=data)
         req.add_header('Content-Type', 'application/json')
 
-        with urllib.request.urlopen(req) as response:
-            result = json.loads(response.read())
-            return result['prompt_id']
+        try:
+            with urllib.request.urlopen(req, timeout=30) as response:
+                result = json.loads(response.read())
+
+                # Check if response contains an error
+                if 'error' in result:
+                    error_data = result['error']
+                    raise ComfyUIAPIError(
+                        status_code=response.status,
+                        message=error_data.get('message', 'Unknown error'),
+                        details=error_data.get('details', {})
+                    )
+
+                # Check if prompt_id is present
+                if 'prompt_id' not in result:
+                    raise ComfyUIAPIError(
+                        status_code=response.status,
+                        message="API response missing 'prompt_id' field",
+                        details=result
+                    )
+
+                return result['prompt_id']
+
+        except urllib.error.HTTPError as e:
+            # HTTP error (4xx, 5xx)
+            try:
+                error_body = json.loads(e.read().decode('utf-8'))
+                message = error_body.get('error', {}).get('message', str(e))
+                details = error_body.get('error', {}).get('details', {})
+            except:
+                message = str(e)
+                details = {}
+
+            raise ComfyUIAPIError(
+                status_code=e.code,
+                message=message,
+                details=details
+            ) from e
+
+        except urllib.error.URLError as e:
+            raise ComfyUIError(
+                f"Cannot connect to ComfyUI at {self.server_url}. "
+                f"Ensure ComfyUI is running. Error: {e.reason}"
+            ) from e
+
+        except TimeoutError as e:
+            raise ComfyUIError(
+                f"Timeout connecting to ComfyUI at {self.server_url}"
+            ) from e
+
+        except json.JSONDecodeError as e:
+            raise ComfyUIError(
+                f"Invalid JSON response from ComfyUI API: {e}"
+            ) from e
 
     def get_history(self, prompt_id: str) -> Dict[str, Any]:
         """Get history for a specific prompt_id"""
-        with urllib.request.urlopen(f"{self.server_url}/history/{prompt_id}") as response:
-            return json.loads(response.read())
+        try:
+            with urllib.request.urlopen(f"{self.server_url}/history/{prompt_id}", timeout=10) as response:
+                return json.loads(response.read())
+        except urllib.error.URLError as e:
+            raise ComfyUIError(f"Failed to get history: {e}") from e
 
     def get_queue(self) -> Dict[str, Any]:
         """Get current queue status"""
-        with urllib.request.urlopen(f"{self.server_url}/queue") as response:
-            return json.loads(response.read())
+        try:
+            with urllib.request.urlopen(f"{self.server_url}/queue", timeout=10) as response:
+                return json.loads(response.read())
+        except urllib.error.URLError as e:
+            raise ComfyUIError(f"Failed to get queue status: {e}") from e
 
     def wait_for_completion(self, prompt_id: str, poll_interval: float = 2.0) -> Dict[str, Any]:
-        """Wait for a prompt to complete and return its history"""
+        """
+        Wait for a prompt to complete and return its history.
+
+        Raises:
+            ComfyUIExecutionError: If the workflow execution fails
+            ComfyUIError: If there's a communication error
+        """
         while True:
             history = self.get_history(prompt_id)
 
             # Check if prompt_id exists in history (means it's completed)
             if prompt_id in history:
-                return history[prompt_id]
+                result = history[prompt_id]
+
+                # Check if execution failed
+                status = result.get('status', {})
+                if status.get('status_str') == 'error' or 'error' in status:
+                    # Extract error information
+                    error_info = status.get('error', {})
+                    messages = result.get('messages', [])
+
+                    # Try to find detailed error in messages
+                    exception_type = None
+                    exception_message = None
+                    traceback = None
+                    node_id = error_info.get('node_id')
+
+                    for msg in messages:
+                        if isinstance(msg, list) and len(msg) >= 2:
+                            msg_type, msg_data = msg[0], msg[1]
+                            if msg_type == 'execution_error':
+                                exception_type = msg_data.get('exception_type')
+                                exception_message = msg_data.get('exception_message')
+                                traceback = msg_data.get('traceback')
+                                node_id = node_id or msg_data.get('node_id')
+
+                    # Fallback to error dict if messages don't have details
+                    if not exception_message and 'exception_message' in error_info:
+                        exception_message = error_info['exception_message']
+                    if not exception_type and 'exception_type' in error_info:
+                        exception_type = error_info['exception_type']
+
+                    raise ComfyUIExecutionError(
+                        prompt_id=prompt_id,
+                        node_id=node_id,
+                        exception_type=exception_type,
+                        exception_message=exception_message or "Unknown execution error",
+                        traceback=traceback
+                    )
+
+                return result
 
             # Check queue to see if it's still running
             queue_info = self.get_queue()
@@ -65,17 +226,41 @@ class ComfyUIClient:
                 # Not in queue anymore, check history one more time
                 history = self.get_history(prompt_id)
                 if prompt_id in history:
-                    return history[prompt_id]
+                    result = history[prompt_id]
+                    # Check for errors even on this final check
+                    status = result.get('status', {})
+                    if status.get('status_str') == 'error':
+                        error_info = status.get('error', {})
+                        raise ComfyUIExecutionError(
+                            prompt_id=prompt_id,
+                            node_id=error_info.get('node_id'),
+                            exception_message=error_info.get('exception_message', 'Unknown error')
+                        )
+                    return result
                 else:
-                    raise RuntimeError(f"Prompt {prompt_id} disappeared from queue without completing")
+                    raise ComfyUIError(f"Prompt {prompt_id} disappeared from queue without completing")
 
             time.sleep(poll_interval)
 
 
 def load_workflow_template(workflow_path: str) -> Dict[str, Any]:
-    """Load the workflow template from file"""
-    with open(workflow_path, 'r') as f:
-        return json.load(f)
+    """
+    Load the workflow template from file.
+
+    Raises:
+        FileNotFoundError: If workflow file doesn't exist
+        ComfyUIError: If workflow file is invalid JSON
+    """
+    try:
+        with open(workflow_path, 'r') as f:
+            return json.load(f)
+    except FileNotFoundError:
+        raise FileNotFoundError(
+            f"Workflow file not found: {workflow_path}\n"
+            f"Expected location: {os.path.abspath(workflow_path)}"
+        )
+    except json.JSONDecodeError as e:
+        raise ComfyUIError(f"Invalid JSON in workflow file {workflow_path}: {e}")
 
 
 def create_benchmark_workflow(
@@ -157,6 +342,9 @@ def run_warmup(
     - Initializing Ray actors
     - Compiling kernels (Flash Attention, etc.)
     - Warming up CUDA/ROCm runtime
+
+    Raises:
+        ComfyUIError: If warm-up generation fails
     """
     print("\n" + "="*80)
     print(f"WARM-UP ({warmup_runs} run{'s' if warmup_runs > 1 else ''})")
@@ -455,15 +643,17 @@ Examples:
     print(f"Model precision: {args.precision.upper()}")
     print(f"Loading workflow from: {args.workflow}")
 
-    # For initial testing, use the provided API export
-    if not os.path.exists(args.workflow):
-        print(f"Warning: Workflow file not found, using inline template")
-        workflow_template = {
-            # Your provided workflow template would go here
-            # For now, we'll load from file
-        }
-    else:
+    try:
         workflow_template = load_workflow_template(args.workflow)
+    except FileNotFoundError as e:
+        print(f"\n✗ Error: {e}")
+        print("\nAvailable workflow templates:")
+        print(f"  FP16: example_workflows/WanT2V_MI300X_Throughput_Benchmark.json")
+        print(f"  FP8:  example_workflows/WanT2V_MI300X_FP8_Benchmark.json")
+        return 1
+    except ComfyUIError as e:
+        print(f"\n✗ Error loading workflow: {e}")
+        return 1
 
     # Create client
     client = ComfyUIClient(args.url)
@@ -496,9 +686,29 @@ Examples:
     if args.warmup > 0 and not args.no_warmup:
         try:
             run_warmup(client, workflow_template, precision=args.precision, warmup_runs=args.warmup)
-        except Exception as e:
-            print(f"\n⚠ Warning: Warm-up failed: {e}")
-            print("Continuing with benchmarks anyway...")
+        except ComfyUIAPIError as e:
+            print(f"\n✗ Warm-up failed with API error:")
+            print(f"{e}")
+            print("\nPossible causes:")
+            print("  - Models not downloaded to ComfyUI/models/diffusion_models/")
+            print("  - Incorrect workflow configuration")
+            print("  - ComfyUI custom nodes not installed")
+            print("\nFix the error and try again.")
+            return 1
+        except ComfyUIExecutionError as e:
+            print(f"\n✗ Warm-up failed with execution error:")
+            print(f"{e}")
+            print("\nPossible causes:")
+            print("  - GPU out of memory")
+            print("  - Ray actor initialization failed")
+            print("  - Model loading error")
+            print("\nFix the error and try again.")
+            return 1
+        except ComfyUIError as e:
+            print(f"\n✗ Warm-up failed:")
+            print(f"{e}")
+            print("\nEnsure ComfyUI is running at {args.url}")
+            return 1
     elif not args.no_warmup and len(configs) > 1:
         # Automatic single warm-up for multi-config runs
         print("\n💡 Tip: Use --warmup 1 to ensure models are loaded before benchmarking")
@@ -517,22 +727,46 @@ Examples:
         except KeyboardInterrupt:
             print("\n\nBenchmark interrupted by user")
             break
+        except ComfyUIAPIError as e:
+            print(f"\n✗ Run #{i} failed with API error:")
+            print(f"{e}")
+            print("\nBenchmark aborted. Fix the error and try again.")
+            break
+        except ComfyUIExecutionError as e:
+            print(f"\n✗ Run #{i} failed with execution error:")
+            print(f"{e}")
+            print("\nBenchmark aborted. Fix the error and try again.")
+            break
+        except ComfyUIError as e:
+            print(f"\n✗ Run #{i} failed:")
+            print(f"{e}")
+            print("\nBenchmark aborted. Fix the error and try again.")
+            break
         except Exception as e:
-            print(f"\n✗ Error in run #{i}: {e}")
+            print(f"\n✗ Run #{i} failed with unexpected error:")
+            print(f"{e}")
             import traceback
             traceback.print_exc()
-            continue
+            print("\nBenchmark aborted. Fix the error and try again.")
+            break
 
-    # Print summary
-    print_summary(results)
+    # Print summary if we have any results
+    if results:
+        print_summary(results)
 
-    # Final save
-    save_results(results, args.output)
+        # Final save
+        save_results(results, args.output)
 
     print(f"\n{'='*80}")
-    print("BENCHMARK COMPLETE")
+    if len(results) == len(configs):
+        print("BENCHMARK COMPLETE")
+    else:
+        print(f"BENCHMARK INCOMPLETE ({len(results)}/{len(configs)} runs completed)")
     print(f"{'='*80}")
+
+    return 0
 
 
 if __name__ == '__main__':
-    main()
+    import sys
+    sys.exit(main())

@@ -87,8 +87,29 @@ def run_benchmark_for_backend(backend: str, config: dict) -> dict:
         )
 
         if result.returncode != 0:
-            print(f"Error running benchmark for {backend}:")
-            print(result.stderr)
+            print(f"\n✗ Error running benchmark for {backend}:")
+            print("="*80)
+
+            # Check for specific error patterns in output
+            output = result.stdout + result.stderr
+            if "ComfyUI API Error" in output or "Workflow Execution Failed" in output:
+                # Print the formatted error from benchmark script
+                print(result.stdout)
+                if result.stderr:
+                    print(result.stderr)
+            elif "Cannot connect to ComfyUI" in output:
+                print("Cannot connect to ComfyUI server.")
+                print("Ensure ComfyUI is running at http://127.0.0.1:8188")
+            elif "Workflow file not found" in output:
+                print(f"Workflow template not found: {WORKFLOW_TEMPLATE}")
+            else:
+                # Generic error
+                print(result.stdout)
+                if result.stderr:
+                    print("\nStderr:")
+                    print(result.stderr)
+
+            print("="*80)
             return None
 
         # Parse the generation time from output
@@ -101,6 +122,11 @@ def run_benchmark_for_backend(backend: str, config: dict) -> dict:
                 except:
                     pass
 
+        if gen_time is None:
+            print(f"Warning: Could not parse generation time for {backend}")
+            print("Output may not contain timing information")
+            return None
+
         return {
             'backend': backend,
             'generation_time': gen_time,
@@ -109,10 +135,14 @@ def run_benchmark_for_backend(backend: str, config: dict) -> dict:
         }
 
     except subprocess.TimeoutExpired:
-        print(f"Timeout running benchmark for {backend}")
+        print(f"\n✗ Timeout running benchmark for {backend}")
+        print("Benchmark took longer than 10 minutes")
         return None
     except Exception as e:
-        print(f"Exception running benchmark for {backend}: {e}")
+        print(f"\n✗ Unexpected error running benchmark for {backend}:")
+        print(f"{e}")
+        import traceback
+        traceback.print_exc()
         return None
     finally:
         # Cleanup temp workflow
@@ -255,21 +285,47 @@ Example:
 
     # Run benchmarks
     results = []
+    critical_error = False
     for i, backend in enumerate(args.backends, 1):
         print(f"\n[{i}/{len(args.backends)}] Testing {backend}...")
         result = run_benchmark_for_backend(backend, config)
         if result:
             results.append(result)
         else:
-            print(f"Skipping {backend} due to errors")
+            print(f"\n⚠ Skipping {backend} due to errors")
 
-    # Print comparison
-    print_comparison_table(results)
+            # Check if this is a critical error that affects all backends
+            # (e.g., ComfyUI not running, workflow file missing)
+            if i == 1:
+                print("\n✗ Critical Error: First backend test failed")
+                print("This likely indicates a problem that will affect all backends:")
+                print("  - ComfyUI not running")
+                print("  - Workflow template not found")
+                print("  - Models not loaded")
+                print("\nFix the issue and try again.")
+                critical_error = True
+                break
+
+    # Print comparison if we have any results
+    if results:
+        print_comparison_table(results)
+    elif critical_error:
+        print("\n" + "="*80)
+        print("BENCHMARK ABORTED - FIX ERRORS AND RETRY")
+        print("="*80)
+        return 1
 
     print("\n" + "="*80)
-    print("BENCHMARK COMPLETE")
+    if len(results) == len(args.backends):
+        print("BENCHMARK COMPLETE")
+    elif results:
+        print(f"BENCHMARK INCOMPLETE ({len(results)}/{len(args.backends)} backends tested)")
+    else:
+        print("BENCHMARK FAILED - NO RESULTS")
     print("="*80)
+
+    return 0 if results else 1
 
 
 if __name__ == '__main__':
-    main()
+    sys.exit(main())
