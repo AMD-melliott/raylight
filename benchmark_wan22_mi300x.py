@@ -10,6 +10,7 @@ import urllib.error
 import time
 import csv
 import os
+import re
 from datetime import datetime
 from typing import Dict, Any, List, Optional
 import argparse
@@ -270,10 +271,17 @@ def create_benchmark_workflow(
     length: int,
     steps: int,
     prompt: str,
-    seed: int
+    seed: int,
+    num_gpus: int = 8
 ) -> Dict[str, Any]:
     """Create a workflow with specific benchmark parameters"""
     workflow = json.loads(json.dumps(template))  # Deep copy
+
+    # Update GPU configuration (node 38 - RayInitializer)
+    if "38" in workflow:
+        workflow["38"]["inputs"]["GPU"] = num_gpus
+        # Set ulysses_degree to match GPU count for optimal parallelism
+        workflow["38"]["inputs"]["ulysses_degree"] = num_gpus
 
     # Update resolution and length (node 19 - EmptyHunyuanLatentVideo)
     workflow["19"]["inputs"]["width"] = width
@@ -332,7 +340,8 @@ def run_warmup(
     client: ComfyUIClient,
     workflow_template: Dict[str, Any],
     precision: str = 'fp16',
-    warmup_runs: int = 1
+    warmup_runs: int = 1,
+    num_gpus: int = 8
 ) -> None:
     """
     Run warm-up generation(s) to ensure models are loaded.
@@ -373,7 +382,8 @@ def run_warmup(
             length=warmup_config['length'],
             steps=warmup_config['steps'],
             prompt=warmup_config['prompt'],
-            seed=warmup_config['seed']
+            seed=warmup_config['seed'],
+            num_gpus=num_gpus
         )
 
         start_time = time.time()
@@ -386,6 +396,7 @@ def run_warmup(
 
     print(f"\n✓ Warm-up complete! Models loaded and ready.")
     print(f"  Precision: {precision.upper()}")
+    print(f"  GPU count: {num_gpus}")
     print(f"  Models are now in VRAM and kernels compiled")
     print("="*80)
 
@@ -395,11 +406,12 @@ def run_benchmark(
     workflow_template: Dict[str, Any],
     config: Dict[str, Any],
     run_id: int,
-    precision: str = 'fp16'
+    precision: str = 'fp16',
+    num_gpus: int = 8
 ) -> Dict[str, Any]:
     """Run a single benchmark test"""
     print(f"\n{'='*80}")
-    print(f"Run #{run_id}: {config['width']}x{config['height']} @ {config['length']} frames, {config['steps']} steps ({precision.upper()})")
+    print(f"Run #{run_id}: {config['width']}x{config['height']} @ {config['length']} frames, {config['steps']} steps ({precision.upper()}, {num_gpus} GPUs)")
     print(f"{'='*80}")
 
     # Create workflow with benchmark parameters
@@ -410,7 +422,8 @@ def run_benchmark(
         length=config['length'],
         steps=config['steps'],
         prompt=config['prompt'],
-        seed=config.get('seed', int(time.time()))
+        seed=config.get('seed', int(time.time())),
+        num_gpus=num_gpus
     )
 
     # Queue the prompt
@@ -563,7 +576,21 @@ def print_summary(results: List[Dict[str, Any]]):
     print(f"\n{'Configuration':<40} {'Gen Time (s)':<15} {'Avg (s)':<10}")
     print("-" * 80)
 
-    for config, times in sorted(by_config.items()):
+    # Sort by resolution (total pixels), then frames, then steps
+    def sort_key(item):
+        config_str = item[0]
+        # Parse config string: "1280x720@161frames_40steps"
+        match = re.match(r'(\d+)x(\d+)@(\d+)frames_(\d+)steps', config_str)
+        if match:
+            width = int(match.group(1))
+            height = int(match.group(2))
+            frames = int(match.group(3))
+            steps = int(match.group(4))
+            # Sort by total pixels (resolution), then frames, then steps
+            return (width * height, frames, steps)
+        return (0, 0, 0)  # Fallback for unparseable strings
+
+    for config, times in sorted(by_config.items(), key=sort_key):
         avg_time = sum(times) / len(times)
         times_str = ", ".join([f"{t:.1f}" for t in times])
         print(f"{config:<40} {times_str:<15} {avg_time:.1f}")
@@ -586,11 +613,17 @@ Examples:
   # Quick test (single config, FP16)
   python benchmark_wan22_mi300x.py --quick
 
+  # Quick test with 4 GPUs and warm-up
+  python benchmark_wan22_mi300x.py --quick --num-gpus 4 --warmup 1
+
   # Quick test with FP8 quantization and warm-up
   python benchmark_wan22_mi300x.py --quick --precision fp8 --warmup 1
 
   # Full benchmark with FP16 and warm-up (recommended)
   python benchmark_wan22_mi300x.py --warmup 2
+
+  # Full benchmark with 4 GPUs
+  python benchmark_wan22_mi300x.py --num-gpus 4 --warmup 1
 
   # Full benchmark with FP8 quantization
   python benchmark_wan22_mi300x.py --precision fp8 --warmup 1
@@ -598,8 +631,8 @@ Examples:
   # Custom benchmark with explicit workflow
   python benchmark_wan22_mi300x.py --workflow workflow.json --output my_results.csv --warmup 1
 
-  # Test specific configuration
-  python benchmark_wan22_mi300x.py --width 1920 --height 1080 --length 161 --steps 50 --precision fp8 --warmup 1
+  # Test specific configuration with 2 GPUs
+  python benchmark_wan22_mi300x.py --width 1920 --height 1080 --length 161 --steps 50 --num-gpus 2 --precision fp8 --warmup 1
         """
     )
 
@@ -625,6 +658,8 @@ Examples:
     parser.add_argument('--height', type=int, help='Custom height')
     parser.add_argument('--length', type=int, help='Custom frame count')
     parser.add_argument('--steps', type=int, help='Custom step count')
+    parser.add_argument('--num-gpus', type=int, default=8,
+                       help='Number of GPUs to use for parallelization (default: 8)')
 
     args = parser.parse_args()
 
@@ -642,6 +677,7 @@ Examples:
 
     # Load workflow template
     print(f"Model precision: {args.precision.upper()}")
+    print(f"GPU configuration: {args.num_gpus} GPUs")
     print(f"Loading workflow from: {args.workflow}")
 
     try:
@@ -686,7 +722,7 @@ Examples:
     # Run warm-up if requested
     if args.warmup > 0 and not args.no_warmup:
         try:
-            run_warmup(client, workflow_template, precision=args.precision, warmup_runs=args.warmup)
+            run_warmup(client, workflow_template, precision=args.precision, warmup_runs=args.warmup, num_gpus=args.num_gpus)
         except ComfyUIAPIError as e:
             print(f"\n✗ Warm-up failed with API error:")
             print(f"{e}")
@@ -719,7 +755,7 @@ Examples:
     results = []
     for i, config in enumerate(configs, 1):
         try:
-            result = run_benchmark(client, workflow_template, config, i, precision=args.precision)
+            result = run_benchmark(client, workflow_template, config, i, precision=args.precision, num_gpus=args.num_gpus)
             results.append(result)
 
             # Save intermediate results
