@@ -341,7 +341,8 @@ def run_warmup(
     workflow_template: Dict[str, Any],
     precision: str = 'fp16',
     warmup_runs: int = 1,
-    num_gpus: int = 8
+    num_gpus: int = 8,
+    concise: bool = False
 ) -> None:
     """
     Run warm-up generation(s) to ensure models are loaded.
@@ -355,11 +356,14 @@ def run_warmup(
     Raises:
         ComfyUIError: If warm-up generation fails
     """
-    print("\n" + "="*80)
-    print(f"WARM-UP ({warmup_runs} run{'s' if warmup_runs > 1 else ''})")
-    print("="*80)
-    print("Loading models and initializing GPU kernels...")
-    print("(This ensures accurate benchmark timing by eliminating cold-start overhead)")
+    if concise:
+        print(f"\nWarm-up: {warmup_runs} run{'s' if warmup_runs > 1 else ''}... ", end="", flush=True)
+    else:
+        print("\n" + "="*80)
+        print(f"WARM-UP ({warmup_runs} run{'s' if warmup_runs > 1 else ''})")
+        print("="*80)
+        print("Loading models and initializing GPU kernels...")
+        print("(This ensures accurate benchmark timing by eliminating cold-start overhead)")
 
     # Use minimal configuration for fastest warm-up
     warmup_config = {
@@ -372,7 +376,7 @@ def run_warmup(
     }
 
     for i in range(warmup_runs):
-        if warmup_runs > 1:
+        if not concise and warmup_runs > 1:
             print(f"\nWarm-up run {i+1}/{warmup_runs}...")
 
         workflow = create_benchmark_workflow(
@@ -391,14 +395,17 @@ def run_warmup(
         client.wait_for_completion(prompt_id)
         elapsed = time.time() - start_time
 
-        if warmup_runs > 1:
+        if not concise and warmup_runs > 1:
             print(f"  Completed in {elapsed:.2f}s")
 
-    print(f"\n✓ Warm-up complete! Models loaded and ready.")
-    print(f"  Precision: {precision.upper()}")
-    print(f"  GPU count: {num_gpus}")
-    print(f"  Models are now in VRAM and kernels compiled")
-    print("="*80)
+    if concise:
+        print(f"✓ {elapsed:.2f}s")
+    else:
+        print(f"\n✓ Warm-up complete! Models loaded and ready.")
+        print(f"  Precision: {precision.upper()}")
+        print(f"  GPU count: {num_gpus}")
+        print(f"  Models are now in VRAM and kernels compiled")
+        print("="*80)
 
 
 def run_benchmark(
@@ -407,12 +414,17 @@ def run_benchmark(
     config: Dict[str, Any],
     run_id: int,
     precision: str = 'fp16',
-    num_gpus: int = 8
+    num_gpus: int = 8,
+    concise: bool = False
 ) -> Dict[str, Any]:
     """Run a single benchmark test"""
-    print(f"\n{'='*80}")
-    print(f"Run #{run_id}: {config['width']}x{config['height']} @ {config['length']} frames, {config['steps']} steps ({precision.upper()}, {num_gpus} GPUs)")
-    print(f"{'='*80}")
+    if concise:
+        # Concise output for singleton runs
+        print(f"\n[{precision.upper()}, {num_gpus} GPUs] {config['width']}x{config['height']} @ {config['length']} frames, {config['steps']} steps")
+    else:
+        print(f"\n{'='*80}")
+        print(f"Run #{run_id}: {config['width']}x{config['height']} @ {config['length']} frames, {config['steps']} steps ({precision.upper()}, {num_gpus} GPUs)")
+        print(f"{'='*80}")
 
     # Create workflow with benchmark parameters
     workflow = create_benchmark_workflow(
@@ -427,14 +439,21 @@ def run_benchmark(
     )
 
     # Queue the prompt
-    print("Submitting workflow to ComfyUI...")
+    if concise:
+        print("Submitting to ComfyUI... ", end="", flush=True)
+    else:
+        print("Submitting workflow to ComfyUI...")
     start_time = time.time()
     prompt_id = client.queue_prompt(workflow)
     queue_time = time.time()
-    print(f"Queued with prompt_id: {prompt_id}")
+    if concise:
+        print(f"queued ({prompt_id[:8]}...)")
+        print("Generating... ", end="", flush=True)
+    else:
+        print(f"Queued with prompt_id: {prompt_id}")
+        print("Waiting for generation to complete...")
 
     # Wait for completion
-    print("Waiting for generation to complete...")
     history = client.wait_for_completion(prompt_id)
     end_time = time.time()
 
@@ -443,10 +462,13 @@ def run_benchmark(
     total_time = end_time - start_time
     generation_time = total_time - queue_delay
 
-    print(f"\n✓ Generation completed!")
-    print(f"  Queue delay: {queue_delay:.2f}s")
-    print(f"  Generation time: {generation_time:.2f}s")
-    print(f"  Total time: {total_time:.2f}s")
+    if concise:
+        print(f"✓ {generation_time:.2f}s")
+    else:
+        print(f"\n✓ Generation completed!")
+        print(f"  Queue delay: {queue_delay:.2f}s")
+        print(f"  Generation time: {generation_time:.2f}s")
+        print(f"  Total time: {total_time:.2f}s")
 
     # Extract additional timing info
     timing_info = extract_timing_info(history)
@@ -470,10 +492,11 @@ def run_benchmark(
     return result
 
 
-def save_results(results: List[Dict[str, Any]], output_file: str):
+def save_results(results: List[Dict[str, Any]], output_file: str, concise: bool = False):
     """Save benchmark results to CSV"""
     if not results:
-        print("No results to save")
+        if not concise:
+            print("No results to save")
         return
 
     fieldnames = [
@@ -486,7 +509,10 @@ def save_results(results: List[Dict[str, Any]], output_file: str):
         writer.writeheader()
         writer.writerows(results)
 
-    print(f"\n✓ Results saved to {output_file}")
+    if concise:
+        print(f"Saved: {output_file}")
+    else:
+        print(f"\n✓ Results saved to {output_file}")
 
 
 # Benchmark configurations
@@ -556,9 +582,13 @@ def generate_benchmark_configs(
     return configs
 
 
-def print_summary(results: List[Dict[str, Any]]):
+def print_summary(results: List[Dict[str, Any]], concise: bool = False):
     """Print benchmark summary statistics"""
     if not results:
+        return
+
+    # Skip summary for singleton runs in concise mode
+    if concise and len(results) == 1:
         return
 
     print("\n" + "="*80)
@@ -613,11 +643,14 @@ Examples:
   # Quick test (single config, FP16)
   python benchmark_wan22_mi300x.py --quick
 
+  # Quick test with concise output (ideal for singleton runs)
+  python benchmark_wan22_mi300x.py --quick --concise --warmup 1
+
   # Quick test with 4 GPUs and warm-up
   python benchmark_wan22_mi300x.py --quick --num-gpus 4 --warmup 1
 
-  # Quick test with FP8 quantization and warm-up
-  python benchmark_wan22_mi300x.py --quick --precision fp8 --warmup 1
+  # Quick test with FP8 quantization and warm-up (concise)
+  python benchmark_wan22_mi300x.py --quick --precision fp8 --warmup 1 --concise
 
   # Full benchmark with FP16 and warm-up (recommended)
   python benchmark_wan22_mi300x.py --warmup 2
@@ -646,6 +679,8 @@ Examples:
                        help='ComfyUI server URL')
     parser.add_argument('--quick', action='store_true',
                        help='Run quick test (single config)')
+    parser.add_argument('--concise', action='store_true',
+                       help='Use concise output format (ideal for singleton benchmarks)')
     parser.add_argument('--prompt', type=str, default=DEFAULT_PROMPT,
                        help='Text prompt for generation')
     parser.add_argument('--warmup', type=int, metavar='N', default=0,
@@ -676,9 +711,12 @@ Examples:
         args.output = f'benchmark_results_{args.precision}_{timestamp}.csv'
 
     # Load workflow template
-    print(f"Model precision: {args.precision.upper()}")
-    print(f"GPU configuration: {args.num_gpus} GPUs")
-    print(f"Loading workflow from: {args.workflow}")
+    if not args.concise:
+        print(f"Model precision: {args.precision.upper()}")
+        print(f"GPU configuration: {args.num_gpus} GPUs")
+        print(f"Loading workflow from: {args.workflow}")
+    else:
+        print(f"Config: {args.precision.upper()}, {args.num_gpus} GPUs, {args.workflow}")
 
     try:
         workflow_template = load_workflow_template(args.workflow)
@@ -716,13 +754,15 @@ Examples:
             quick_test=args.quick
         )
 
-    print(f"\nStarting benchmark with {len(configs)} configurations")
-    print(f"Results will be saved to: {args.output}")
+    if not args.concise:
+        print(f"\nStarting benchmark with {len(configs)} configurations")
+        print(f"Results will be saved to: {args.output}")
 
     # Run warm-up if requested
     if args.warmup > 0 and not args.no_warmup:
         try:
-            run_warmup(client, workflow_template, precision=args.precision, warmup_runs=args.warmup, num_gpus=args.num_gpus)
+            run_warmup(client, workflow_template, precision=args.precision,
+                      warmup_runs=args.warmup, num_gpus=args.num_gpus, concise=args.concise)
         except ComfyUIAPIError as e:
             print(f"\n✗ Warm-up failed with API error:")
             print(f"{e}")
@@ -746,7 +786,7 @@ Examples:
             print(f"{e}")
             print("\nEnsure ComfyUI is running at {args.url}")
             return 1
-    elif not args.no_warmup and len(configs) > 1:
+    elif not args.no_warmup and len(configs) > 1 and not args.concise:
         # Automatic single warm-up for multi-config runs
         print("\n💡 Tip: Use --warmup 1 to ensure models are loaded before benchmarking")
         print("   (This prevents cold-start from affecting first benchmark run)")
@@ -755,11 +795,13 @@ Examples:
     results = []
     for i, config in enumerate(configs, 1):
         try:
-            result = run_benchmark(client, workflow_template, config, i, precision=args.precision, num_gpus=args.num_gpus)
+            result = run_benchmark(client, workflow_template, config, i,
+                                  precision=args.precision, num_gpus=args.num_gpus,
+                                  concise=args.concise)
             results.append(result)
 
             # Save intermediate results
-            save_results(results, args.output)
+            save_results(results, args.output, concise=args.concise)
 
         except KeyboardInterrupt:
             print("\n\nBenchmark interrupted by user")
@@ -789,17 +831,18 @@ Examples:
 
     # Print summary if we have any results
     if results:
-        print_summary(results)
+        print_summary(results, concise=args.concise)
 
         # Final save
-        save_results(results, args.output)
+        save_results(results, args.output, concise=args.concise)
 
-    print(f"\n{'='*80}")
-    if len(results) == len(configs):
-        print("BENCHMARK COMPLETE")
-    else:
-        print(f"BENCHMARK INCOMPLETE ({len(results)}/{len(configs)} runs completed)")
-    print(f"{'='*80}")
+    if not args.concise:
+        print(f"\n{'='*80}")
+        if len(results) == len(configs):
+            print("BENCHMARK COMPLETE")
+        else:
+            print(f"BENCHMARK INCOMPLETE ({len(results)}/{len(configs)} runs completed)")
+        print(f"{'='*80}")
 
     return 0
 
