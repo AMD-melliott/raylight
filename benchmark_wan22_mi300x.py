@@ -539,9 +539,8 @@ STEP_COUNTS = [
 ]
 
 DEFAULT_PROMPT = (
-    "Epic slow-motion shot of a gaming PC with AMD Radeon graphics card rendering a fantasy world,"
-    "the camera pushes through the GPU fans into the silicon where we see electrical signals racing through the chip architecture," 
-    "then emerges into a vast AI data center with rows of AMD Instinct Data Center GPU accelerators processing neural networks"
+    #"3D metallic letters 'AMD' floating above 'TME' in bold typography, with electric blue lightning arcing between the letters, dramatic rim lighting, sparks and embers rising upward, dark background with volumetric fog, cinematic lighting, photorealistic rendering"
+    "Glass letters 'AMD' with internal RGB lighting suspended above mirror-polished 'TME', complex light refraction and caustics patterns on surrounding surfaces, studio lighting setup, slow camera orbit, crystal-clear reflections"
 )
 
 def generate_benchmark_configs(
@@ -671,7 +670,7 @@ Examples:
 
     parser.add_argument('--workflow', type=str,
                        help='Path to workflow JSON file (API format). If not specified, auto-selects based on --precision')
-    parser.add_argument('--precision', type=str, choices=['fp16', 'fp8'], default='fp16',
+    parser.add_argument('--precision', type=str, choices=['fp16', 'fp8', 'fp8_scaled'], default='fp16',
                        help='Model precision: fp16 (default) or fp8 (faster, lower memory)')
     parser.add_argument('--output', type=str,
                        help='Output CSV file for results (auto-generated if not specified)')
@@ -702,6 +701,8 @@ Examples:
     if args.workflow is None:
         if args.precision == 'fp8':
             args.workflow = 'example_workflows/WanT2V_MI300X_FP8_Benchmark.json'
+        elif args.precision == 'fp8_scaled':
+            args.workflow = 'example_workflows/WanT2V_MI300X_FP8_Benchmark_scaled.json'
         else:
             args.workflow = 'example_workflows/WanT2V_MI300X_Throughput_Benchmark.json'
 
@@ -725,6 +726,7 @@ Examples:
         print("\nAvailable workflow templates:")
         print(f"  FP16: example_workflows/WanT2V_MI300X_Throughput_Benchmark.json")
         print(f"  FP8:  example_workflows/WanT2V_MI300X_FP8_Benchmark.json")
+        print(f"  FP8:  example_workflows/WanT2V_MI300X_FP8_Benchmark_scaled.json")
         return 1
     except ComfyUIError as e:
         print(f"\n✗ Error loading workflow: {e}")
